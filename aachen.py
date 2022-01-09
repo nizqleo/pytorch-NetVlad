@@ -150,7 +150,7 @@ class WholeDatasetFromStruct(data.Dataset):
             'image': image,
             'original_size': np.array(size),
         }
-        return data
+        return data, index
 
     def __len__(self):
         return len(self.images)

@@ -88,7 +88,7 @@ def train(epoch):
     nBatches = (len(train_set) + opt.batchSize - 1) // opt.batchSize
 
     for subIter in range(subsetN):
-        print('====> Building Cache')
+        print('====> Building Cache... current subIter', subIter, 'total ', subsetN)
         model.eval()
         train_set.cache = join(opt.cachePath, train_set.whichSet + '_feat_cache.hdf5')
         with h5py.File(train_set.cache, mode='w') as h5: 
@@ -99,13 +99,13 @@ def train(epoch):
                     [len(whole_train_set), pool_size], 
                     dtype=np.float32)
             with torch.no_grad():
-                for iteration, input in tqdm(enumerate(whole_training_data_loader, 1)):
+                for iteration, (input, index) in tqdm(enumerate(whole_training_data_loader, 1)):
                     name = input['name'][0]
                     image_input = input['image']
                     input = image_input.to(device)
                     image_encoding = model.encoder(input)
                     vlad_encoding = model.pool(image_encoding) 
-                    h5feat[indices.detach().numpy(), :] = vlad_encoding.detach().cpu().numpy()
+                    h5feat[index.detach().numpy(), :] = vlad_encoding.detach().cpu().numpy()
                     del input, image_encoding, vlad_encoding
 
         sub_train_set = Subset(dataset=train_set, indices=subsetIdx[subIter])
