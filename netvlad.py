@@ -4,11 +4,13 @@ import torch.nn.functional as F
 from sklearn.neighbors import NearestNeighbors
 import numpy as np
 
+from scipy.io import loadmat
+
 # based on https://github.com/lyakaap/NetVLAD-pytorch/blob/master/netvlad.py
 class NetVLAD(nn.Module):
     """NetVLAD layer implementation"""
 
-    def __init__(self, num_clusters=64, dim=128, 
+    def __init__(self, num_clusters=64, dim=512, 
                  normalize_input=True, vladv2=False):
         """
         Args:
@@ -31,6 +33,20 @@ class NetVLAD(nn.Module):
         self.normalize_input = normalize_input
         self.conv = nn.Conv2d(dim, num_clusters, kernel_size=(1, 1), bias=vladv2)
         self.centroids = nn.Parameter(torch.rand(num_clusters, dim))
+        
+        mat = loadmat("/app/third_party/netvlad/VGG16-NetVLAD-Pitts30K.mat", struct_as_record=False, squeeze_me=True)
+
+        output_dim = dim * num_clusters
+        self.whiten = nn.Linear(output_dim, 4096)
+
+        w = mat['net'].layers[33].weights[0]  # Shape: 1 x 1 x IN x OUT
+        b = mat['net'].layers[33].weights[1]  # Shape: OUT
+        # Prepare for PyTorch - make sure it is float32 and has right shape
+        w = torch.tensor(w).float().squeeze().permute([1, 0])  # OUT x IN
+        b = torch.tensor(b.squeeze()).float()  # Shape: OUT
+        # Update layer weights.
+        self.whiten.weight = nn.Parameter(w)
+        self.whiten.bias = nn.Parameter(b)
 
     def init_params(self, clsts, traindescs):
         #TODO replace numpy ops with pytorch ops
@@ -81,8 +97,11 @@ class NetVLAD(nn.Module):
             residual *= soft_assign[:,C:C+1,:].unsqueeze(2)
             vlad[:,C:C+1,:] = residual.sum(dim=-1)
 
-        vlad = F.normalize(vlad, p=2, dim=2)  # intra-normalization
+        vlad = F.normalize(vlad, dim=1)  # intra-normalization
         vlad = vlad.view(x.size(0), -1)  # flatten
-        vlad = F.normalize(vlad, p=2, dim=1)  # L2 normalize
+        vlad = F.normalize(vlad, dim=1)  # L2 normalize
+
+        vlad = self.whiten(vlad)
+        vlad = F.normalize(vlad, dim=1)  # Final L2 normalization.
 
         return vlad

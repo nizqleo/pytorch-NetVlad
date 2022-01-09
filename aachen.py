@@ -3,53 +3,54 @@ import torchvision.transforms as transforms
 import torch.utils.data as data
 
 from os.path import join, exists
+import os
 from scipy.io import loadmat
 import numpy as np
 from random import randint, random
 from collections import namedtuple
 from PIL import Image
+import cv2
 
 from sklearn.neighbors import NearestNeighbors
 import h5py
 
-root_dir = '/app/pytorch-NetVlad/tokyo247'
+root_dir = '/app/mid_data'
 if not exists(root_dir):
     raise FileNotFoundError('root_dir is hardcoded, please adjust to point to Pittsburgh dataset')
 
+group_dir = join(root_dir, 'group')
 struct_dir = join(root_dir, 'datasets/')
 #queries_dir = join(root_dir, 'queries_real')
 
 def input_transform():
     return transforms.Compose([
+        # transforms.RandomSizedCrop(224),
+        # transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                               std=[0.229, 0.224, 0.225]),
-    ])
+                               std=[0.229, 0.224, 0.225]),])
 
-def get_whole_training_set(onlyDB=True):
-    structFile = join(struct_dir, 'tokyoTM_train.mat')
-    return WholeDatasetFromStruct(structFile,
-                             input_transform=input_transform(),
-                             onlyDB=onlyDB)
+def get_whole_training_set():
+    # structFile = join(struct_dir, 'tokyoTM_train.mat')
+    return WholeDatasetFromStruct(input_transform=input_transform())
 
 def get_whole_val_set():
-    structFile = join(struct_dir, 'tokyoTM_val.mat')
-    return WholeDatasetFromStruct(structFile,
-                             input_transform=input_transform())
+    # structFile = join(struct_dir, 'tokyoTM_val.mat')
+    return WholeDatasetFromStruct(input_transform=input_transform())
 
 def get_training_query_set(margin=0.1):
-    structFile = join(struct_dir, 'tokyoTM_train.mat')
-    return QueryDatasetFromStruct(structFile,
-                             input_transform=input_transform(), margin=margin)
+    # structFile = join(struct_dir, 'tokyoTM_train.mat')
+    return QueryDatasetFromStruct(input_transform=input_transform(), margin=margin)
 
 def get_val_query_set():
-    structFile = join(struct_dir, 'tokyoTM_val.mat')
-    return QueryDatasetFromStruct(structFile,
-                             input_transform=input_transform())
+    # structFile = join(struct_dir, 'tokyoTM_val.mat')
+    return QueryDatasetFromStruct(input_transform=input_transform())
 
 dbStruct = namedtuple('dbStruct', ['whichSet', 'dataset', 
     'dbImage', 'utmDb', 'qImage', 'utmQ', 'numDb', 'numQ',
     'posDistThr', 'posDistSqThr', 'nonTrivPosDistSqThr'])
+
+resize_max = 1024
 
 def parse_dbStruct(path):
     mat = loadmat(path)
@@ -76,44 +77,85 @@ def parse_dbStruct(path):
             utmQ, numDb, numQ, posDistThr, 
             posDistSqThr, nonTrivPosDistSqThr)
 
+def image_reading_preprocess(path):
+    image = cv2.imread(path, cv2.IMREAD_COLOR)
+
+    if len(image.shape) == 3:
+        image = image[:, :, ::-1]
+
+    image = image.astype(np.float32)
+
+    size = image.shape[:2][::-1]
+    w, h = size
+
+    # if max(w, h) > resize_max:
+    scale = resize_max / max(h, w)
+    h_new, w_new = int(round(h*scale)), int(round(w*scale))
+    image = cv2.resize(
+        image, (w_new, h_new), interpolation=cv2.INTER_LINEAR)
+    top_padding = int((resize_max - h_new)/2)
+    down_padding = resize_max-h_new-top_padding
+    left_padding = int((resize_max - w_new)/2)
+    right_padding = resize_max-w_new-left_padding
+
+    image = cv2.copyMakeBorder(image, top_padding, down_padding, left_padding, right_padding,
+                            cv2.BORDER_CONSTANT,value=0)
+
+    # print(image.shape)
+    image = image.transpose((2, 0, 1))  # HxWxC to CxHxW
+    image = image / 255.
+    
+    return image, size
+
 class WholeDatasetFromStruct(data.Dataset):
-    def __init__(self, structFile, input_transform=None, onlyDB=False):
+    def __init__(self, input_transform=None):
         super().__init__()
 
         self.input_transform = input_transform
 
-        self.dbStruct = parse_dbStruct(structFile)
-        self.images = [join(root_dir, dbIm) for dbIm in self.dbStruct.dbImage]
-        if not onlyDB:
-            self.images += [join(queries_dir, qIm) for qIm in self.dbStruct.qImage]
+        # self.dbStruct = parse_dbStruct(structFile)
+        self.images = list()
+        group_names = os.listdir(group_dir)
+        self.positives = list()
+        for group_name in group_names:
+            if group_name[0] != '.':
+                if os.path.isdir(os.path.join(group_dir, group_name)):
+                    patch_names = os.listdir(os.path.join(group_dir, group_name))
+                    indexes = list(range(len(self.images), len(self.images) + len(patch_names)))
+                    for patch_name in patch_names:
+                        self.images.append(group_name + '/' + patch_name)
+                        self.positives.append(indexes)
+                else:
+                    patch_name = group_name
+                    self.positives.append([len(self.images)])
+                    self.images.append(patch_name)
+                    
+        self.positives = np.array(self.positives)
+        # if not onlyDB:
+        #     self.images += [join(queries_dir, qIm) for qIm in self.dbStruct.qImage]
 
-        self.whichSet = self.dbStruct.whichSet
-        self.dataset = self.dbStruct.dataset
-
-        self.positives = None
-        self.distances = None
+        self.whichSet = "db"
+        self.dataset = "aachen"
+        self.size = len(self.images)
 
     def __getitem__(self, index):
-        img = Image.open(self.images[index])
 
-        if self.input_transform:
-            img = self.input_transform(img)
+        image, size = image_reading_preprocess(str(join(group_dir , self.images[index])))
 
-        return img, index
+        # if self.input_transform:
+        #     image = self.input_transform(image)
+
+        data = {
+            'name': self.images[index],
+            'image': image,
+            'original_size': np.array(size),
+        }
+        return data
 
     def __len__(self):
         return len(self.images)
 
     def getPositives(self):
-        # positives for evaluation are those within trivial threshold range
-        #fit NN to find them, search by radius
-        if  self.positives is None:
-            knn = NearestNeighbors(n_jobs=-1)
-            knn.fit(self.dbStruct.utmDb)
-
-            self.distances, self.positives = knn.radius_neighbors(self.dbStruct.utmQ,
-                    radius=self.dbStruct.posDistThr)
-
         return self.positives
         
 def collate_fn(batch):
@@ -145,50 +187,39 @@ def collate_fn(batch):
     return query, positive, negatives, negCounts, indices
 
 class QueryDatasetFromStruct(data.Dataset):
-    def __init__(self, structFile, nNegSample=1000, nNeg=10, margin=0.1, input_transform=None):
+    def __init__(self, nNegSample=1000, nNeg=10, margin=0.1, input_transform=None):
         super().__init__()
 
         self.input_transform = input_transform
         self.margin = margin
 
-        self.dbStruct = parse_dbStruct(structFile)
-        self.whichSet = self.dbStruct.whichSet
-        self.dataset = self.dbStruct.dataset
+        # self.dbStruct = parse_dbStruct(structFile)
+        self.whichSet = "query"
+        self.dataset = "aachen"
         self.nNegSample = nNegSample # number of negatives to randomly sample
         self.nNeg = nNeg # number of negatives used for training
 
-        # potential positives are those within nontrivial threshold range
-        #fit NN to find them, search by radius
-        knn = NearestNeighbors(n_jobs=-1)
-        knn.fit(self.dbStruct.utmDb)
-
-        # TODO use sqeuclidean as metric?
-        self.nontrivial_positives = list(knn.radius_neighbors(self.dbStruct.utmQ,
-                radius=self.dbStruct.nonTrivPosDistSqThr**0.5, 
-                return_distance=False))
-        # radius returns unsorted, sort once now so we dont have to later
-        for i,posi in enumerate(self.nontrivial_positives):
-            self.nontrivial_positives[i] = np.sort(posi)
-        # its possible some queries don't have any non trivial potential positives
-        # lets filter those out
-        self.queries = np.where(np.array([len(x) for x in self.nontrivial_positives])>0)[0]
-
-        # potential negatives are those outside of posDistThr range
-        potential_positives = knn.radius_neighbors(self.dbStruct.utmQ,
-                radius=self.dbStruct.posDistThr, 
-                return_distance=False)
+        self.queries = list()
+        group_names = os.listdir(group_dir)
+        self.nontrivial_positives = list()
+        for group_name in group_names:
+            if group_name[0] != '.':
+                patch_names = os.listdir(os.path.join(group_dir, group_name))
+                indexes = list(range(len(self.queries), len(self.queries) + len(patch_names)))
+                for patch_name in patch_names:
+                    self.queries.append(group_name + '/' + patch_name)
+                    self.nontrivial_positives.append(indexes)
 
         self.potential_negatives = []
-        for pos in potential_positives:
-            self.potential_negatives.append(np.setdiff1d(np.arange(self.dbStruct.numDb),
+        for pos in self.nontrivial_positives:
+            self.potential_negatives.append(np.setdiff1d(np.arange(len(self.queries)),
                 pos, assume_unique=True))
 
         self.cache = None # filepath of HDF5 containing feature vectors for images
-
-        self.negCache = [np.empty((0,)) for _ in range(self.dbStruct.numQ)]
+        self.negCache = [np.empty((0,)) for _ in range(len(self.queries))]
 
     def __getitem__(self, index):
-        index = self.queries[index] # re-map index to match dataset
+        # index = self.queries[index] # re-map index to match dataset
         with h5py.File(self.cache, mode='r') as h5: 
             h5feat = h5.get("features")
 
@@ -208,8 +239,7 @@ class QueryDatasetFromStruct(data.Dataset):
             negFeat = h5feat[negSample.tolist()]
             knn.fit(negFeat)
 
-            dNeg, negNN = knn.kneighbors(qFeat.reshape(1,-1), 
-                    self.nNeg*10) # to quote netvlad paper code: 10x is hacky but fine
+            dNeg, negNN = knn.kneighbors(qFeat.reshape(1,-1), self.nNeg*10) # to quote netvlad paper code: 10x is hacky but fine
             dNeg = dNeg.reshape(-1)
             negNN = negNN.reshape(-1)
 
@@ -224,18 +254,18 @@ class QueryDatasetFromStruct(data.Dataset):
             negIndices = negSample[negNN].astype(np.int32)
             self.negCache[index] = negIndices
 
-        query = Image.open(join(queries_dir, self.dbStruct.qImage[index]))
-        positive = Image.open(join(root_dir, self.dbStruct.dbImage[posIndex]))
+        query, _= image_reading_preprocess(join(group_dir, self.queries[index]))
+        positive, _= image_reading_preprocess(join(group_dir, self.queries[posIndex]))
 
-        if self.input_transform:
-            query = self.input_transform(query)
-            positive = self.input_transform(positive)
+        # if self.input_transform:
+        #     query = self.input_transform(query)
+        #     positive = self.input_transform(positive)
 
         negatives = []
         for negIndex in negIndices:
-            negative = Image.open(join(root_dir, self.dbStruct.dbImage[negIndex]))
-            if self.input_transform:
-                negative = self.input_transform(negative)
+            negative, _= image_reading_preprocess(join(root_dir, self.queries[negIndex]))
+            # if self.input_transform:
+            #     negative = self.input_transform(negative)
             negatives.append(negative)
 
         negatives = torch.stack(negatives, 0)

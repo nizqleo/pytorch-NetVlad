@@ -24,6 +24,9 @@ from tensorboardX import SummaryWriter
 import numpy as np
 import netvlad
 
+from tqdm import tqdm
+
+
 parser = argparse.ArgumentParser(description='pytorch-NetVlad')
 parser.add_argument('--mode', type=str, default='train', help='Mode', choices=['train', 'test', 'cluster'])
 parser.add_argument('--batchSize', type=int, default=4, 
@@ -44,11 +47,11 @@ parser.add_argument('--momentum', type=float, default=0.9, help='Momentum for SG
 parser.add_argument('--nocuda', action='store_true', help='Dont use cuda')
 parser.add_argument('--threads', type=int, default=8, help='Number of threads for each data loader to use')
 parser.add_argument('--seed', type=int, default=123, help='Random seed to use.')
-parser.add_argument('--dataPath', type=str, default='/nfs/ibrahimi/data/', help='Path for centroid data.')
-parser.add_argument('--runsPath', type=str, default='/nfs/ibrahimi/runs/', help='Path to save runs to.')
+parser.add_argument('--dataPath', type=str, default='/app/pytorch-NetVlad/centroid_data', help='Path for centroid data.')
+parser.add_argument('--runsPath', type=str, default='/app/pytorch-NetVlad/runs/', help='Path to save runs to.')
 parser.add_argument('--savePath', type=str, default='checkpoints', 
         help='Path to save checkpoints to in logdir. Default=checkpoints/')
-parser.add_argument('--cachePath', type=str, default=environ['TMPDIR'], help='Path to save cache to.')
+parser.add_argument('--cachePath', type=str, default='/tmp', help='Path to save cache to.')
 parser.add_argument('--resume', type=str, default='', help='Path to load checkpoint from, for resuming training or testing.')
 parser.add_argument('--ckpt', type=str, default='latest', 
         help='Resume from latest or best checkpoint.', choices=['latest', 'best'])
@@ -56,7 +59,7 @@ parser.add_argument('--evalEvery', type=int, default=1,
         help='Do a validation set run, and save, every N epochs.')
 parser.add_argument('--patience', type=int, default=10, help='Patience for early stopping. 0 is off.')
 parser.add_argument('--dataset', type=str, default='pittsburgh', 
-        help='Dataset to use', choices=['pittsburgh'])
+        help='Dataset to use', choices=['pittsburgh', 'tokyo247', 'aachen'])
 parser.add_argument('--arch', type=str, default='vgg16', 
         help='basenetwork to use', choices=['vgg16', 'alexnet'])
 parser.add_argument('--vladv2', action='store_true', help='Use VLAD v2')
@@ -83,22 +86,25 @@ def train(epoch):
     nBatches = (len(train_set) + opt.batchSize - 1) // opt.batchSize
 
     for subIter in range(subsetN):
-        print('====> Building Cache')
-        model.eval()
-        train_set.cache = join(opt.cachePath, train_set.whichSet + '_feat_cache.hdf5')
-        with h5py.File(train_set.cache, mode='w') as h5: 
-            pool_size = encoder_dim
-            if opt.pooling.lower() == 'netvlad': pool_size *= opt.num_clusters
-            h5feat = h5.create_dataset("features", 
-                    [len(whole_train_set), pool_size], 
-                    dtype=np.float32)
-            with torch.no_grad():
-                for iteration, (input, indices) in enumerate(whole_training_data_loader, 1):
-                    input = input.to(device)
-                    image_encoding = model.encoder(input)
-                    vlad_encoding = model.pool(image_encoding) 
-                    h5feat[indices.detach().numpy(), :] = vlad_encoding.detach().cpu().numpy()
-                    del input, image_encoding, vlad_encoding
+        # print('====> Building Cache')
+        # model.eval()
+        # train_set.cache = join(opt.cachePath, train_set.whichSet + '_feat_cache.hdf5')
+        # with h5py.File(train_set.cache, mode='w') as h5: 
+        #     pool_size = encoder_dim
+        #     if opt.pooling.lower() == 'netvlad': pool_size *= opt.num_clusters
+        #     pool_size = 4096
+        #     h5feat = h5.create_dataset("features", 
+        #             [len(whole_train_set), pool_size], 
+        #             dtype=np.float32)
+        #     with torch.no_grad():
+        #         for iteration, input in enumerate(whole_training_data_loader, 1):
+        #             name = input['name'][0]
+        #             image_input = input['image']
+        #             input = image_input.to(device)
+        #             image_encoding = model.encoder(input)
+        #             vlad_encoding = model.pool(image_encoding) 
+        #             h5feat[indices.detach().numpy(), :] = vlad_encoding.detach().cpu().numpy()
+        #             del input, image_encoding, vlad_encoding
 
         sub_train_set = Subset(dataset=train_set, indices=subsetIdx[subIter])
 
@@ -171,22 +177,31 @@ def train(epoch):
 def test(eval_set, epoch=0, write_tboard=False):
     # TODO what if features dont fit in memory? 
     test_data_loader = DataLoader(dataset=eval_set, 
-                num_workers=opt.threads, batch_size=opt.cacheBatchSize, shuffle=False, 
-                pin_memory=cuda)
+                num_workers=0, batch_size=5, shuffle=False)
 
     model.eval()
     with torch.no_grad():
         print('====> Extracting Features')
         pool_size = encoder_dim
         if opt.pooling.lower() == 'netvlad': pool_size *= opt.num_clusters
-        dbFeat = np.empty((len(eval_set), pool_size))
+        # TODO: add condition
+        pool_size = 4096
+        dbFeat = dict()
 
-        for iteration, (input, indices) in enumerate(test_data_loader, 1):
-            input = input.to(device)
+        for iteration, input in tqdm(enumerate(test_data_loader, 1)):
+            name = input['name'][0]
+            print(name)
+            image_input = input['image']
+            input = image_input.to(device)
             image_encoding = model.encoder(input)
             vlad_encoding = model.pool(image_encoding) 
 
-            dbFeat[indices.detach().numpy(), :] = vlad_encoding.detach().cpu().numpy()
+            desc = vlad_encoding.detach().cpu().numpy()
+            dbFeat[name] = desc
+            with h5py.File("sample_descriptors_6.h5", mode='a') as h5:
+                grp = h5.create_group(name)
+                grp.create_dataset('descriptors', data=desc)
+
             if iteration % 50 == 0 or len(test_data_loader) <= 10:
                 print("==> Batch ({}/{})".format(iteration, 
                     len(test_data_loader)), flush=True)
@@ -194,8 +209,13 @@ def test(eval_set, epoch=0, write_tboard=False):
             del input, image_encoding, vlad_encoding
     del test_data_loader
 
+    # with h5py.File("sample_descriptors_1.h5", mode='w') as h5:
+    #     grp = h5.create_group(name)
+    #     grp.create_dataset('descriptors', data=dbFeat)
+
+    return
     # extracted for both db and query, now split in own sets
-    qFeat = dbFeat[eval_set.dbStruct.numDb:].astype('float32')
+    qFeat = dbFeat[len(eval_set):].astype('float32')
     dbFeat = dbFeat[:eval_set.dbStruct.numDb].astype('float32')
     
     print('====> Building faiss index')
@@ -325,6 +345,10 @@ if __name__ == "__main__":
 
     if opt.dataset.lower() == 'pittsburgh':
         import pittsburgh as dataset
+    elif opt.dataset.lower() == 'tokyo247':
+        import tokyo247 as dataset
+    elif opt.dataset.lower() == 'aachen':
+        import aachen as dataset
     else:
         raise Exception('Unknown dataset')
 
@@ -344,14 +368,14 @@ if __name__ == "__main__":
     if opt.mode.lower() == 'train':
         whole_train_set = dataset.get_whole_training_set()
         whole_training_data_loader = DataLoader(dataset=whole_train_set, 
-                num_workers=opt.threads, batch_size=opt.cacheBatchSize, shuffle=False, 
+                num_workers=opt.threads, batch_size=opt.cacheBatchSize, shuffle=False,
                 pin_memory=cuda)
 
         train_set = dataset.get_training_query_set(opt.margin)
 
         print('====> Training query set:', len(train_set))
         whole_test_set = dataset.get_whole_val_set()
-        print('===> Evaluating on val set, query count:', whole_test_set.dbStruct.numQ)
+        print('===> Evaluating on val set, query count:', len(whole_test_set))
     elif opt.mode.lower() == 'test':
         if opt.split.lower() == 'test':
             whole_test_set = dataset.get_whole_test_set()
@@ -367,7 +391,7 @@ if __name__ == "__main__":
             print('===> Evaluating on val set')
         else:
             raise ValueError('Unknown dataset split: ' + opt.split)
-        print('====> Query count:', whole_test_set.dbStruct.numQ)
+        print('====> Query count:', len(whole_test_set))
     elif opt.mode.lower() == 'cluster':
         whole_train_set = dataset.get_whole_training_set(onlyDB=True)
 
@@ -472,10 +496,10 @@ if __name__ == "__main__":
             checkpoint = torch.load(resume_ckpt, map_location=lambda storage, loc: storage)
             opt.start_epoch = checkpoint['epoch']
             best_metric = checkpoint['best_score']
-            model.load_state_dict(checkpoint['state_dict'])
+            model.load_state_dict(checkpoint['state_dict'], strict=False)
             model = model.to(device)
-            if opt.mode == 'train':
-                optimizer.load_state_dict(checkpoint['optimizer'])
+            # if opt.mode == 'train':
+                # optimizer.load_state_dict(checkpoint['optimizer'])
             print("=> loaded checkpoint '{}' (epoch {})"
                   .format(resume_ckpt, checkpoint['epoch']))
         else:
@@ -495,7 +519,7 @@ if __name__ == "__main__":
         # write checkpoints in logdir
         logdir = writer.file_writer.get_logdir()
         opt.savePath = join(logdir, opt.savePath)
-        if not opt.resume:
+        if not exists(opt.savePath):
             makedirs(opt.savePath)
 
         with open(join(opt.savePath, 'flags.json'), 'w') as f:

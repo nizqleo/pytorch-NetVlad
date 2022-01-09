@@ -1,0 +1,17 @@
+.DS_Store
+
+*.h5
+
+runs/*
+datasets/*
+
+tokyo247/*
+
+*.gz
+*.zip
+
+__pycache__/*
+
+*.mat
+
+vgg16_netvlad_checkpoint/*
