@@ -97,7 +97,7 @@ def train(epoch):
                     [len(whole_train_set), pool_size], 
                     dtype=np.float32)
             with torch.no_grad():
-                for iteration, input in enumerate(whole_training_data_loader, 1):
+                for iteration, input in tqdm(enumerate(whole_training_data_loader, 1)):
                     name = input['name'][0]
                     image_input = input['image']
                     input = image_input.to(device)
@@ -467,8 +467,8 @@ if __name__ == "__main__":
             model.pool = nn.DataParallel(model.pool)
         isParallel = True
 
-    if not opt.resume:
-        model = model.to(device)
+    # if not opt.resume:
+    model = model.to(device)
     
     if opt.mode.lower() == 'train':
         if opt.optim.upper() == 'ADAM':
