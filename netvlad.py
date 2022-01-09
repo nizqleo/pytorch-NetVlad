@@ -34,7 +34,7 @@ class NetVLAD(nn.Module):
         self.conv = nn.Conv2d(dim, num_clusters, kernel_size=(1, 1), bias=vladv2)
         self.centroids = nn.Parameter(torch.rand(num_clusters, dim))
         
-        mat = loadmat("/app/third_party/netvlad/VGG16-NetVLAD-Pitts30K.mat", struct_as_record=False, squeeze_me=True)
+        mat = loadmat("/root/repos/pytorch-NetVlad/VGG16-NetVLAD-Pitts30K.mat", struct_as_record=False, squeeze_me=True)
 
         output_dim = dim * num_clusters
         self.whiten = nn.Linear(output_dim, 4096)

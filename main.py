@@ -25,7 +25,7 @@ import numpy as np
 import netvlad
 
 from tqdm import tqdm
-
+import gc
 
 parser = argparse.ArgumentParser(description='pytorch-NetVlad')
 parser.add_argument('--mode', type=str, default='train', help='Mode', choices=['train', 'test', 'cluster'])
@@ -75,6 +75,8 @@ def train(epoch):
     epoch_loss = 0
     startIter = 1 # keep track of batch iter across subsets for logging
 
+    gc.collect()
+    torch.cuda.empty_cache()
     if opt.cacheRefreshRate > 0:
         subsetN = ceil(len(train_set) / opt.cacheRefreshRate)
         #TODO randomise the arange before splitting?
@@ -345,7 +347,8 @@ if __name__ == "__main__":
                 opt = parser.parse_args(train_flags, namespace=opt)
 
     print(opt)
-
+    opt.batchSize = 4
+    opt.cacheBatchSize=4
     if opt.dataset.lower() == 'pittsburgh':
         import pittsburgh as dataset
     elif opt.dataset.lower() == 'tokyo247':

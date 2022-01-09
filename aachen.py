@@ -14,7 +14,7 @@ import cv2
 from sklearn.neighbors import NearestNeighbors
 import h5py
 
-root_dir = '/app/mid_data'
+root_dir = '/root/data/'
 if not exists(root_dir):
     raise FileNotFoundError('root_dir is hardcoded, please adjust to point to Pittsburgh dataset')
 
