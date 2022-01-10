@@ -27,8 +27,9 @@ def input_transform():
         # transforms.RandomSizedCrop(224),
         # transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                               std=[0.229, 0.224, 0.225]),])
+        # transforms.Normalize(mean=[0.485, 0.456, 0.406],
+        #                        std=[0.229, 0.224, 0.225]),])
+    ])
 
 def get_whole_training_set():
     # structFile = join(struct_dir, 'tokyoTM_train.mat')
@@ -142,8 +143,8 @@ class WholeDatasetFromStruct(data.Dataset):
 
         image, size = image_reading_preprocess(str(join(group_dir , self.images[index])))
 
-        # if self.input_transform:
-        #     image = self.input_transform(image)
+        if self.input_transform:
+            image = self.input_transform(image)
 
         data = {
             'name': self.images[index],
@@ -205,7 +206,7 @@ class QueryDatasetFromStruct(data.Dataset):
         for group_name in group_names:
             if group_name[0] != '.':
                 patch_names = os.listdir(os.path.join(group_dir, group_name))
-                indexes = list(range(len(self.queries), len(self.queries) + len(patch_names)))
+                indexes = np.array(list(range(len(self.queries), len(self.queries) + len(patch_names))))
                 for patch_name in patch_names:
                     self.queries.append(group_name + '/' + patch_name)
                     self.nontrivial_positives.append(indexes)
@@ -223,7 +224,7 @@ class QueryDatasetFromStruct(data.Dataset):
         with h5py.File(self.cache, mode='r') as h5: 
             h5feat = h5.get("features")
 
-            qOffset = self.dbStruct.numDb 
+            qOffset = 0
             qFeat = h5feat[index+qOffset]
 
             posFeat = h5feat[self.nontrivial_positives[index].tolist()]
@@ -234,8 +235,7 @@ class QueryDatasetFromStruct(data.Dataset):
             posIndex = self.nontrivial_positives[index][posNN[0]].item()
 
             negSample = np.random.choice(self.potential_negatives[index], self.nNegSample)
-            negSample = np.unique(np.concatenate([self.negCache[index], negSample]))
-
+            negSample = np.unique(np.concatenate([self.negCache[index], negSample])).astype('int32')
             negFeat = h5feat[negSample.tolist()]
             knn.fit(negFeat)
 
@@ -257,15 +257,15 @@ class QueryDatasetFromStruct(data.Dataset):
         query, _= image_reading_preprocess(join(group_dir, self.queries[index]))
         positive, _= image_reading_preprocess(join(group_dir, self.queries[posIndex]))
 
-        # if self.input_transform:
-        #     query = self.input_transform(query)
-        #     positive = self.input_transform(positive)
+        if self.input_transform:
+            query = self.input_transform(query)
+            positive = self.input_transform(positive)
 
         negatives = []
         for negIndex in negIndices:
-            negative, _= image_reading_preprocess(join(root_dir, self.queries[negIndex]))
-            # if self.input_transform:
-            #     negative = self.input_transform(negative)
+            negative, _= image_reading_preprocess(join(group_dir, self.queries[negIndex]))
+            if self.input_transform:
+                negative = self.input_transform(negative)
             negatives.append(negative)
 
         negatives = torch.stack(negatives, 0)
