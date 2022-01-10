@@ -143,8 +143,8 @@ class WholeDatasetFromStruct(data.Dataset):
 
         image, size = image_reading_preprocess(str(join(group_dir , self.images[index])))
 
-        if self.input_transform:
-            image = self.input_transform(image)
+        # if self.input_transform:
+        #     image = self.input_transform(image)
 
         data = {
             'name': self.images[index],
@@ -257,16 +257,16 @@ class QueryDatasetFromStruct(data.Dataset):
         query, _= image_reading_preprocess(join(group_dir, self.queries[index]))
         positive, _= image_reading_preprocess(join(group_dir, self.queries[posIndex]))
 
-        if self.input_transform:
-            query = self.input_transform(query)
-            positive = self.input_transform(positive)
+        # if self.input_transform:
+        #     query = self.input_transform(query)
+        #     positive = self.input_transform(positive)
 
         negatives = []
         for negIndex in negIndices:
             negative, _= image_reading_preprocess(join(group_dir, self.queries[negIndex]))
-            if self.input_transform:
-                negative = self.input_transform(negative)
-            negatives.append(negative)
+            # if self.input_transform:
+            #     negative = self.input_transform(negative)
+            negatives.append(torch.from_numpy(negative))
 
         negatives = torch.stack(negatives, 0)
 
